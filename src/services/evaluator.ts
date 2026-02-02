@@ -1,9 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { assertCopilotCliReady } from "../utils/copilot";
 
 type EvalCase = {
   prompt: string;
@@ -45,7 +42,7 @@ export async function runEval(options: EvalRunOptions): Promise<{ summary: strin
   const progress = options.onProgress ?? (() => {});
 
   progress("Starting Copilot SDK...");
-  const cliPath = await findCopilotCliPath();
+  const cliPath = await assertCopilotCliReady();
   const sdk = await import("@github/copilot-sdk");
   const client = new sdk.CopilotClient({ cliPath });
 
@@ -220,37 +217,47 @@ function parseJudge(content: string): JudgeResult {
 
 async function loadConfig(configPath: string): Promise<EvalConfig> {
   const raw = await fs.readFile(configPath, "utf8");
-  return JSON.parse(raw) as EvalConfig;
-}
-
-async function findCopilotCliPath(): Promise<string> {
-  // Try standard PATH first
+  let parsed: unknown;
   try {
-    const { stdout } = await execFileAsync("which", ["copilot"], { timeout: 5000 });
-    return stdout.trim();
+    parsed = JSON.parse(raw);
   } catch {
-    // Ignore - will try VS Code location
+    throw new Error(`Eval config is not valid JSON: ${configPath}`);
   }
 
-  // VS Code Copilot Chat extension location
-  const home = process.env.HOME ?? "";
-  const vscodeLocations = [
-    `${home}/Library/Application Support/Code - Insiders/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
-    `${home}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
-    `${home}/.vscode-insiders/extensions/github.copilot-chat-*/copilotCli/copilot`,
-    `${home}/.vscode/extensions/github.copilot-chat-*/copilotCli/copilot`,
-  ];
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Eval config must be a JSON object.");
+  }
 
-  for (const location of vscodeLocations) {
-    try {
-      await fs.access(location);
-      return location;
-    } catch {
-      // Try next location
+  const obj = parsed as Record<string, unknown>;
+
+  if (!Array.isArray(obj.cases) || obj.cases.length === 0) {
+    throw new Error("Eval config must contain a non-empty 'cases' array.");
+  }
+
+  for (let i = 0; i < obj.cases.length; i++) {
+    const c = obj.cases[i] as Record<string, unknown>;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) {
+      throw new Error(`Eval config cases[${i}] must be an object.`);
+    }
+    if (typeof c.prompt !== "string" || c.prompt.trim() === "") {
+      throw new Error(`Eval config cases[${i}].prompt must be a non-empty string.`);
+    }
+    if (typeof c.expectation !== "string" || c.expectation.trim() === "") {
+      throw new Error(`Eval config cases[${i}].expectation must be a non-empty string.`);
+    }
+    if (c.id !== undefined && typeof c.id !== "string") {
+      throw new Error(`Eval config cases[${i}].id must be a string if provided.`);
     }
   }
 
-  throw new Error("Copilot CLI not found. Install GitHub Copilot Chat extension in VS Code.");
+  if (obj.instructionFile !== undefined && typeof obj.instructionFile !== "string") {
+    throw new Error("Eval config 'instructionFile' must be a string if provided.");
+  }
+  if (obj.systemMessage !== undefined && typeof obj.systemMessage !== "string") {
+    throw new Error("Eval config 'systemMessage' must be a string if provided.");
+  }
+
+  return parsed as EvalConfig;
 }
 
 async function readOptionalFile(filePath: string): Promise<string> {

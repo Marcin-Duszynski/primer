@@ -21,6 +21,7 @@ export type CloneOptions = {
   shallow?: boolean;
   timeoutMs?: number;
   onProgress?: (stage: string, progress: number) => void;
+  cleanRemoteUrl?: string;
 };
 
 export async function cloneRepo(
@@ -28,7 +29,7 @@ export async function cloneRepo(
   destination: string,
   options: CloneOptions = {}
 ): Promise<void> {
-  const { shallow = true, timeoutMs = 60000, onProgress } = options;
+  const { shallow = true, timeoutMs = 60000, onProgress, cleanRemoteUrl } = options;
   
   const git = simpleGit({
     progress: onProgress ? ({ stage, progress }: SimpleGitProgressEvent) => {
@@ -45,6 +46,11 @@ export async function cloneRepo(
   }
 
   await git.clone(repoUrl, destination, cloneArgs);
+
+  // Strip embedded credentials from the persisted remote URL
+  if (cleanRemoteUrl) {
+    await simpleGit(destination).remote(["set-url", "origin", cleanRemoteUrl]);
+  }
 }
 
 export async function checkoutBranch(repoPath: string, branch: string): Promise<void> {
@@ -57,9 +63,18 @@ export async function checkoutBranch(repoPath: string, branch: string): Promise<
   await git.checkout(branch);
 }
 
+/** @deprecated Use commitFiles() to stage only specific files */
 export async function commitAll(repoPath: string, message: string): Promise<void> {
   const git = simpleGit(repoPath);
   await git.add(["-A"]);
+  const status = await git.status();
+  if (status.files.length === 0) return;
+  await git.commit(message);
+}
+
+export async function commitFiles(repoPath: string, files: string[], message: string): Promise<void> {
+  const git = simpleGit(repoPath);
+  await git.add(files);
   const status = await git.status();
   if (status.files.length === 0) return;
   await git.commit(message);

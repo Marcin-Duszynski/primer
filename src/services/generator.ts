@@ -41,14 +41,14 @@ function renderMcp(): string {
       servers: {
         github: {
           command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-github"],
+          args: ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
           env: {
             GITHUB_PERSONAL_ACCESS_TOKEN: "${input:github_token}"
           }
         },
         filesystem: {
           command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-filesystem", "${workspaceFolder}"]
+          args: ["-y", "@modelcontextprotocol/server-filesystem@2026.1.14", "${workspaceFolder}"]
         }
       },
       inputs: [

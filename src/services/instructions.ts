@@ -1,6 +1,4 @@
-import fs from "fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { assertCopilotCliReady } from "../utils/copilot";
 
 type GenerateInstructionsOptions = {
   repoPath: string;
@@ -9,11 +7,19 @@ type GenerateInstructionsOptions = {
   onProgress?: (message: string) => void;
 };
 
+// TODO: Replace process.chdir() with SDK cwd option when available
+let chdirLock = false;
+
 export async function generateCopilotInstructions(options: GenerateInstructionsOptions): Promise<string> {
+  if (chdirLock) {
+    throw new Error("generateCopilotInstructions is already running. Concurrent calls are not supported because process.chdir() is process-global.");
+  }
+
   const repoPath = options.repoPath;
   const progress = options.onProgress ?? (() => {});
 
   const originalCwd = process.cwd();
+  chdirLock = true;
   process.chdir(repoPath);
 
   progress("Checking Copilot CLI...");
@@ -84,51 +90,6 @@ Output ONLY the markdown content for the instructions file.`;
   } finally {
     await client.stop();
     process.chdir(originalCwd);
+    chdirLock = false;
   }
-}
-
-const execFileAsync = promisify(execFile);
-
-async function findCopilotCliPath(): Promise<string> {
-  // Try standard PATH first
-  try {
-    const { stdout } = await execFileAsync("which", ["copilot"], { timeout: 5000 });
-    return stdout.trim();
-  } catch {
-    // Ignore - will try VS Code location
-  }
-
-  // VS Code Copilot Chat extension location
-  const home = process.env.HOME ?? "";
-  const vscodeLocations = [
-    `${home}/Library/Application Support/Code - Insiders/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
-    `${home}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
-    `${home}/.vscode-insiders/extensions/github.copilot-chat-*/copilotCli/copilot`,
-    `${home}/.vscode/extensions/github.copilot-chat-*/copilotCli/copilot`,
-  ];
-
-  for (const location of vscodeLocations) {
-    try {
-      await fs.access(location);
-      return location;
-    } catch {
-      // Try next location
-    }
-  }
-
-  throw new Error("Copilot CLI not found. Install GitHub Copilot Chat extension in VS Code.");
-}
-
-async function assertCopilotCliReady(): Promise<string> {
-  const cliPath = await findCopilotCliPath();
-  
-  try {
-    await execFileAsync(cliPath, ["--version"], { timeout: 5000 });
-  } catch {
-    throw new Error(`Copilot CLI at ${cliPath} is not working.`);
-  }
-
-  // Note: Copilot CLI uses its own auth system, not gh CLI.
-  // User must run: copilot, then /login inside the CLI.
-  return cliPath;
 }
