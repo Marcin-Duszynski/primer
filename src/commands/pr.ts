@@ -2,8 +2,9 @@ import path from "path";
 import { analyzeRepo } from "../services/analyzer";
 import { generateConfigs } from "../services/generator";
 import { createPullRequest, getRepo } from "../services/github";
-import { checkoutBranch, cloneRepo, commitAll, isGitRepo, pushBranch } from "../services/git";
+import { checkoutBranch, cloneRepo, commitFiles, isGitRepo, pushBranch } from "../services/git";
 import { ensureDir } from "../utils/fs";
+import { parseRepoIdentifier } from "../utils/validation";
 
 type PrOptions = {
   branch?: string;
@@ -23,12 +24,13 @@ export async function prCommand(repo: string | undefined, options: PrOptions): P
     return;
   }
 
-  const [owner, name] = repo.split("/");
-  if (!owner || !name) {
-    console.error("Invalid repo format. Use owner/name.");
+  const parsed = parseRepoIdentifier(repo);
+  if (!parsed) {
+    console.error("Invalid repo format. Use owner/name with valid GitHub names.");
     process.exitCode = 1;
     return;
   }
+  const { owner, name } = parsed;
 
   const repoInfo = await getRepo(token, owner, name);
   const cacheRoot = path.join(process.cwd(), ".primer-cache");
@@ -50,7 +52,7 @@ export async function prCommand(repo: string | undefined, options: PrOptions): P
     force: true
   });
 
-  await commitAll(repoPath, "chore: add AI configurations via Primer");
+  await commitFiles(repoPath, [".vscode/settings.json", ".vscode/mcp.json"], "chore: add AI configurations via Primer");
   await pushBranch(repoPath, branch);
 
   const prUrl = await createPullRequest({

@@ -11,9 +11,10 @@ import {
   listAccessibleRepos,
   checkReposForInstructions
 } from "../services/github";
-import { cloneRepo, checkoutBranch, commitAll, pushBranch, isGitRepo, CloneOptions } from "../services/git";
+import { cloneRepo, checkoutBranch, commitFiles, pushBranch, isGitRepo, CloneOptions } from "../services/git";
 import { generateCopilotInstructions } from "../services/instructions";
 import { ensureDir } from "../utils/fs";
+import { isValidGitHubName } from "../utils/validation";
 import { StaticBanner } from "./AnimatedBanner";
 
 type Props = {
@@ -152,6 +153,11 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
       setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Cloning...`);
 
       try {
+        // Validate repo identifiers before using in file paths
+        if (!isValidGitHubName(repo.owner) || !isValidGitHubName(repo.name)) {
+          throw new Error(`Invalid repository name: ${repo.fullName}`);
+        }
+
         // Clone
         const cacheRoot = path.join(process.cwd(), ".primer-cache");
         const repoPath = path.join(cacheRoot, repo.owner, repo.name);
@@ -164,6 +170,7 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
           await cloneRepo(authedUrl, repoPath, {
             shallow: true,
             timeoutMs: 120000, // 2 minute timeout for clone
+            cleanRemoteUrl: cleanUrl,
             onProgress: (stage, progress) => {
               setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Cloning (${stage} ${progress}%)...`);
             }
@@ -204,7 +211,7 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
 
         // Commit
         setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Committing...`);
-        await commitAll(repoPath, "chore: add copilot instructions via Primer");
+        await commitFiles(repoPath, [".github/copilot-instructions.md"], "chore: add copilot instructions via Primer");
 
         // Push
         setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Pushing...`);
