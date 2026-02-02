@@ -22,52 +22,53 @@ export async function generateCopilotInstructions(options: GenerateInstructionsO
   chdirLock = true;
   process.chdir(repoPath);
 
-  progress("Checking Copilot CLI...");
-  const cliPath = await assertCopilotCliReady();
-
-  progress("Starting Copilot SDK...");
-  const sdk = await import("@github/copilot-sdk");
-  const client = new sdk.CopilotClient({
-    cliPath,
-  });
-
   try {
-    progress("Creating session...");
-    // Try requested model, fall back to gpt-4.1 if gpt-5 fails
-    const preferredModel = options.model ?? "gpt-4.1";
-    const session = await client.createSession({
-      model: preferredModel,
-      streaming: true,
-      systemMessage: {
-        content: "You are an expert codebase analyst. Your task is to generate a concise .github/copilot-instructions.md file. Use the available tools (glob, view, grep) to explore the codebase. Output ONLY the final markdown content, no explanations.",
-      },
-      infiniteSessions: { enabled: false },
+    progress("Checking Copilot CLI...");
+    const cliPath = await assertCopilotCliReady();
+
+    progress("Starting Copilot SDK...");
+    const sdk = await import("@github/copilot-sdk");
+    const client = new sdk.CopilotClient({
+      cliPath,
     });
 
-    let content = "";
-    
-    // Subscribe to events for progress and to capture content
-    session.on((event) => {
-      const e = event as { type: string; data?: Record<string, unknown> };
-      if (e.type === "assistant.message_delta") {
-        const delta = e.data?.deltaContent as string | undefined;
-        if (delta) {
-          content += delta;
-          progress("Generating instructions...");
-        }
-      } else if (e.type === "tool.execution_start") {
-        const toolName = e.data?.toolName as string | undefined;
-        progress(`Using tool: ${toolName ?? "..."}`);
-      } else if (e.type === "session.error") {
-        const errorMsg = (e.data?.message as string) ?? "Unknown error";
-        if (errorMsg.toLowerCase().includes("auth") || errorMsg.toLowerCase().includes("login")) {
-          throw new Error("Copilot CLI not logged in. Run `copilot` then `/login` to authenticate.");
-        }
-      }
-    });
+    try {
+      progress("Creating session...");
+      // Try requested model, fall back to gpt-4.1 if gpt-5 fails
+      const preferredModel = options.model ?? "gpt-4.1";
+      const session = await client.createSession({
+        model: preferredModel,
+        streaming: true,
+        systemMessage: {
+          content: "You are an expert codebase analyst. Your task is to generate a concise .github/copilot-instructions.md file. Use the available tools (glob, view, grep) to explore the codebase. Output ONLY the final markdown content, no explanations.",
+        },
+        infiniteSessions: { enabled: false },
+      });
 
-    // Simple prompt - let the agent use tools to explore
-    const prompt = `Analyze this codebase at ${repoPath} and generate a .github/copilot-instructions.md file.
+      let content = "";
+
+      // Subscribe to events for progress and to capture content
+      session.on((event) => {
+        const e = event as { type: string; data?: Record<string, unknown> };
+        if (e.type === "assistant.message_delta") {
+          const delta = e.data?.deltaContent as string | undefined;
+          if (delta) {
+            content += delta;
+            progress("Generating instructions...");
+          }
+        } else if (e.type === "tool.execution_start") {
+          const toolName = e.data?.toolName as string | undefined;
+          progress(`Using tool: ${toolName ?? "..."}`);
+        } else if (e.type === "session.error") {
+          const errorMsg = (e.data?.message as string) ?? "Unknown error";
+          if (errorMsg.toLowerCase().includes("auth") || errorMsg.toLowerCase().includes("login")) {
+            throw new Error("Copilot CLI not logged in. Run `copilot` then `/login` to authenticate.");
+          }
+        }
+      });
+
+      // Simple prompt - let the agent use tools to explore
+      const prompt = `Analyze this codebase at ${repoPath} and generate a .github/copilot-instructions.md file.
 
 Use tools to explore:
 1. Check for existing instruction files: glob for **/{.github/copilot-instructions.md,AGENT.md,CLAUDE.md,.cursorrules,README.md}
@@ -76,19 +77,21 @@ Use tools to explore:
 
 Generate concise instructions (~20-50 lines) covering:
 - Tech stack and architecture
-- Build/test commands  
+- Build/test commands
 - Project-specific conventions
 - Key files/directories
 
 Output ONLY the markdown content for the instructions file.`;
 
-    progress("Analyzing codebase...");
-    await session.sendAndWait({ prompt }, 180000);
-    await session.destroy();
+      progress("Analyzing codebase...");
+      await session.sendAndWait({ prompt }, 180000);
+      await session.destroy();
 
-    return content.trim() || "";
+      return content.trim() || "";
+    } finally {
+      await client.stop();
+    }
   } finally {
-    await client.stop();
     process.chdir(originalCwd);
     chdirLock = false;
   }
